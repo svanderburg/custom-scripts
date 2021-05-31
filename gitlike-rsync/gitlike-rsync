@@ -1,0 +1,271 @@
+#!/bin/bash -e
+
+DESTINATIONS_FILE=".gitlikersync-destinations"
+IGNORE_FILE=".gitlikersync-ignore"
+
+showUsage()
+{
+    me="$(basename "$0")"
+
+    cat <<EOF
+Usage: $me clone DEST_PATH [LOCAL_PATH] [OPTION]
+  or: $me dry-pull [OPTION]
+  or: $me pull [OPTION]
+  or: $me dry-push [OPTION]
+  or: $me push [OPTION]
+  or: $me destination-add DEST_PATH [OPTION]
+  or: $me destination-rm DEST_PATH [OPTION]
+  or: $me destination [OPTION]
+
+The command \`$me' provides a variety of file exchange operations
+similar to a conventional Git like-workflow.
+
+Commands:
+  clone     Clones a local or remote directory and configures it for pushing
+            and pulling
+  dry-pull  Determines which files it intends to retrieve from the destinations
+            or delete locally
+  pull      Retrieves files from the destination and deletes obsolete local
+            files
+  dry-push  Determines which files it intends to send to the destinations or
+            delete remotely
+  push      Sends files to the destination and deletes obsolete remote files
+  destination-add
+            Adds a destination to a local or remote destination directory
+  destination-rm
+            Removes a local or remote destination directory
+  destination
+            Displays all configured destinations
+
+Options:
+  -y              Auto confirm all questions
+  -c, --checksum  Instructs rsync to use checksums to determine file changes
+                  rather than the size and modification time.
+  -h, --help      Shows the usage of this command
+EOF
+}
+
+checkDestinations()
+{
+    if [ ! -f "$DESTINATIONS_FILE" ]
+    then
+        echo "No destinations found! Please add one with the add-destination command!" >&2
+        exit 1
+    fi
+}
+
+runRsyncCommand()
+{
+    local srcPath="$1"
+    local destPath="$2"
+    local rsyncArgs="$3"
+
+    (
+        # Always ignore the destinations file
+        echo "--exclude"
+        echo "$DESTINATIONS_FILE"
+
+        if [ -f "$IGNORE_FILE" ]
+        then
+            cat "$IGNORE_FILE" | while read filename
+            do
+                echo "--exclude"
+                echo "$filename"
+            done
+        fi
+    ) | xargs -d '\n' rsync --archive --verbose --delete --progress --itemize-changes $rsyncArgs "$srcPath" "$destPath"
+}
+
+runPush()
+{
+    checkDestinations
+
+    cat "$DESTINATIONS_FILE" | while read destinationPath
+    do
+        runRsyncCommand "$PWD/" "$destinationPath" "$1"
+    done
+}
+
+dryPush()
+{
+    runPush "--dry-run $1"
+}
+
+push()
+{
+    runPush "$1"
+}
+
+runPull()
+{
+    checkDestinations
+
+    if [ "$(cat "$DESTINATIONS_FILE" | wc -l)" -gt 1 ]
+    then
+        echo "Pulling will not work with multiple destinations!" >&2
+        exit 1
+    fi
+
+    cat "$DESTINATIONS_FILE" | while read destinationPath
+    do
+        runRsyncCommand "$destinationPath" "$PWD/" "$1"
+    done
+}
+
+dryPull()
+{
+    runPull "--dry-run $1"
+}
+
+pull()
+{
+    runPull "$1"
+}
+
+addDestination()
+{
+    if ! grep -x "$1" "$DESTINATIONS_FILE" 2> /dev/null
+    then
+        # Make sure destination directory has a trailing /
+        if [ "${1: -1}" = "/" ]
+        then
+            echo "$1" >> "$DESTINATIONS_FILE"
+        else
+            echo "$1/" >> "$DESTINATIONS_FILE"
+        fi
+    fi
+}
+
+rmDestination()
+{
+    local destination="$1"
+    sed -i -e "/^$(echo "$destination" | sed 's|/|\\/|g')$/d" "$DESTINATIONS_FILE"
+}
+
+listDestinations()
+{
+    if [ -f "$DESTINATIONS_FILE" ]
+    then
+        cat "$DESTINATIONS_FILE"
+    fi
+}
+
+clone()
+{
+    local destPath="$1"
+    local localDirectory="$2"
+
+    if [ "$localDirectory" = "" ]
+    then
+        localDirectory="$(basename "$1")"
+    fi
+
+    if [ -e "$localDirectory" ]
+    then
+        echo "Cannot clone: $destPath into: $localDirectory, because the latter directory already exists!" >&2
+        exit 1
+    fi
+
+    mkdir -p "$localDirectory"
+    cd "$localDirectory"
+
+    addDestination "$1"
+    pull
+}
+
+checkConfirmation()
+{
+    local functionName="$1"
+    local dryRunFunctionName="$2"
+    local functionArgs="$3"
+
+    if [ "$autoConfirm" = "1" ]
+    then
+        $functionName $functionArgs
+    else
+        $dryRunFunctionName $functionArgs
+        read -p "Do you want to proceed (y/N)? " answer
+
+        if [ "$answer" = "y" ]
+        then
+            $functionName $functionArgs
+        fi
+    fi
+}
+
+# Parse valid argument options
+
+PARAMS=`getopt -n $0 -o cyh -l checksum,help -- "$@"`
+
+if [ $? != 0 ]
+then
+    showUsage
+    exit 1
+fi
+
+# Evaluate valid options
+
+eval set -- "$PARAMS"
+
+while [ "$1" != "--" ]
+do
+    case "$1" in
+        -c|--checksum)
+            checksumArg="--checksum"
+            ;;
+        -y)
+            autoConfirm=1
+            ;;
+        -h|--help)
+            showUsage
+            exit 0
+            ;;
+    esac
+
+    shift
+done
+
+shift
+
+command="$1"
+
+# Validate non-options
+
+if [ "$command" = "" ]
+then
+    echo "No command was provided!" >&2
+    exit 1
+fi
+
+# Execute command
+
+case "$command" in
+    dry-push)
+        dryPush "$checksumArg"
+        ;;
+    push)
+        checkConfirmation push dryPush "$checksumArg"
+        ;;
+    dry-pull)
+        dryPull "$checksumArg"
+        ;;
+    pull)
+        checkConfirmation pull dryPull "$checkSumArg"
+        ;;
+    destination-add)
+        addDestination "$2"
+        ;;
+    destination-rm)
+        rmDestination "$2"
+        ;;
+    destination)
+        listDestinations
+        ;;
+    clone)
+        clone "$2" "$3"
+        ;;
+    *)
+        echo "Unkown command: $command" >&2
+        exit 1
+        ;;
+esac

@@ -1,0 +1,39 @@
+#!/bin/bash -e
+
+# Shows usage of the command
+
+showUsage()
+{
+    me="$(basename "$0")"
+
+    cat <<EOF
+Usage: $me REPOSITORIES_DIR TARBALLS_DIR
+
+Iterates over all repositories in the provided repositories directory and
+archives them -- it will automatically fetch all Git branches from the remotes,
+and create tarballs of Git repositories in the specified tarballs directory.
+EOF
+}
+
+# Validate parameters
+
+repositoriesDirectory="$1"
+tarballsDirectory="$2"
+
+if [ ! -d "$repositoriesDirectory" ] || [ ! -d "$tarballsDirectory" ]
+then
+    showUsage
+    exit 1
+fi
+
+# Execute archival process
+
+cd "$repositoriesDirectory"
+find . -mindepth 1 -maxdepth 1 -type d | while read directory
+do
+    echo "archiving repository: $directory" >&2
+    cd "$directory"
+    git fetch --all
+    cd ..
+    tar cfvj "$tarballsDirectory/$(basename "$directory").tar.bz2" "$directory"
+done
