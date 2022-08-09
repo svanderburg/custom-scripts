@@ -279,7 +279,7 @@ case "$command" in
         clone "$2" "$3"
         ;;
     *)
-        echo "Unkown command: $command" >&2
+        echo "Unknown command: $command" >&2
         exit 1
         ;;
 esac
