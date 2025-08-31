@@ -54,25 +54,11 @@ checkDestinations()
     fi
 }
 
-escapeRemotePath()
-{
-    if [[ "$1" = *":"* ]]
-    then
-        echo "${1// /\\ }"
-    else
-        echo "$1"
-    fi
-}
-
 runRsyncCommand()
 {
     local srcPath="$1"
     local destPath="$2"
     local rsyncArgs="$3"
-
-    # Escape remote paths that have a white space in their filename
-    srcPath="$(escapeRemotePath "$srcPath")"
-    destPath="$(escapeRemotePath "$destPath")"
 
     (
         # Always ignore the destinations file
